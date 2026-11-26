@@ -1,6 +1,6 @@
 # 高新视频生成 Skill
 
-将发布包里的 gaoxin-video 目录放入 Codex skills 目录，在技能目录运行：
+将发布包里的 videogen 目录放入 Codex skills 目录，在技能目录运行：
 
     python -m venv .venv
     .venv\Scripts\python -m pip install -r requirements.txt

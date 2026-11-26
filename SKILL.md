@@ -1,9 +1,11 @@
 ---
-name: gaoxin-video
+name: videogen
 description: 用户要求生成视频、制作短片、让图片动起来、用视频模型出片或续下载已提交的视频任务时使用。经高新网关完成模型发现、一次提交、查询和本地 MP4 交付。
 ---
 
 # 视频生成
+
+视频输出统一使用 videogen；单张静态图片交给 imagegen-dual。同一模型 ID 可以出现在两个列表中。
 
 收到视频意图后由助手操作本目录专属环境的 Python 和 scripts/client.py，无需用户运行脚本。网关仅用 main（主站）或 sh（上海），凭证来自本机 GAOXIN_API_KEY。缺少凭证时说明本机配置方法，不询问聊天中的密钥。
 
