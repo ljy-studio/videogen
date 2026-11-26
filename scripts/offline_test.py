@@ -42,6 +42,18 @@ class VideoTests(unittest.TestCase):
                 self.assertEqual(sent.kwargs['json']['seconds'],5 if endpoint.startswith('/v1') else '5')
                 self.assertTrue(session.get.call_args.args[0].endswith('/task%3Aa%2Fb/content'))
 
+    def test_byok_does_not_switch_to_environment_or_resume_with_another_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "record.json"
+            import hashlib
+            digest = hashlib.sha256(b"videogen-task-key:original").hexdigest()
+            path.write_text(json.dumps(dict(profile="byok", byok_fingerprint=digest, id="task")))
+            with patch.object(c.accounts, "resolve", return_value="different") as resolve, patch.object(c.requests, "Session") as session:
+                with self.assertRaisesRegex(ValueError, "original_byok"):
+                    c.run(SimpleNamespace(command="resume", record=path))
+                resolve.assert_called_once_with("byok")
+                session.assert_not_called()
+
     def test_unmapped_model_cannot_submit(self):
         with self.assertRaisesRegex(ValueError,'unmapped_model'):
             c.payload({'model':'sora-2','prompt':'a cat'})

@@ -2,6 +2,8 @@
 import argparse
 import base64
 import json
+import hashlib
+import hmac
 import os
 import re
 import shutil
@@ -11,6 +13,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
+import accounts
 import requests
 from media_names import media_kind
 
@@ -161,21 +164,39 @@ def finish(session, record, state, reply=None):
 
 
 def run(a):
-    key = os.getenv("GAOXIN_API_KEY")
+    if a.command == "profiles":
+        found, notices = accounts.discover()
+        found.update(byok={"label":"本次直接提供 Key","source":"stdin"})
+        if os.getenv("GAOXIN_API_KEY"):
+            found["environment"] = {"label":"GAOXIN_API_KEY","source":"environment"}
+        return {"profiles":found,"notices":notices}
+    state = {}
+    job = {}
+    if a.command == "resume":
+        record = Path(a.record)
+        state = json.loads(record.read_text(encoding="utf-8"))
+    elif a.command == "generate":
+        job = json.loads(Path(a.job).read_text(encoding="utf-8-sig"))
+    requested = getattr(a, "profile", None)
+    recorded = state.get("profile", "environment") if state else job.get("profile")
+    if requested and recorded and requested != recorded:
+        raise ValueError("conflicting_credential_source")
+    ref = recorded or requested or "environment"
+    key = os.getenv("GAOXIN_API_KEY") if ref == "environment" else accounts.resolve(ref)
     if not key:
-        raise ValueError("configure_GAOXIN_API_KEY")
+        raise ValueError("choose_credential_source")
+    fingerprint = hashlib.sha256(("videogen-task-key:" + key).encode()).hexdigest() if ref == "byok" else None
+    if state.get("byok_fingerprint") and not hmac.compare_digest(state["byok_fingerprint"], fingerprint or ""):
+        raise ValueError("resume_requires_original_byok")
     with requests.Session() as session:
         session.trust_env = False
         session.headers["Authorization"] = "Bearer " + key
         if a.command == "models":
             return {"models": candidates(session, HOSTS[a.gateway])}
         if a.command == "resume":
-            record = Path(a.record)
-            state = json.loads(record.read_text(encoding="utf-8"))
             if not state.get("id"):
                 raise ValueError("no_task_id_check_gateway_before_resubmission")
             return finish(session, record, state)
-        job = json.loads(Path(a.job).read_text(encoding="utf-8-sig"))
         base = HOSTS[job["gateway"]]
         route, body = payload(job)
         if job["model"] not in [x["model"] for x in candidates(session, base)]:
@@ -184,7 +205,9 @@ def run(a):
         task = path.parent / ".video-tasks" / uuid.uuid4().hex
         task.mkdir(parents=True)
         record = task / "record.json"
-        state = dict(status="result_unknown", gateway=job["gateway"], model=job["model"], path=str(path), record=str(record))
+        state = dict(status="result_unknown", profile=ref, gateway=job["gateway"], model=job["model"], path=str(path), record=str(record))
+        if fingerprint:
+            state["byok_fingerprint"] = fingerprint
         write(record,state)
         print(json.dumps({"record": str(record)},ensure_ascii=True),flush=True)
         r = session.post(base + route, json=body, timeout=(10, 600), allow_redirects=False)
@@ -205,9 +228,12 @@ def run(a):
 def main():
     p = argparse.ArgumentParser()
     subs = p.add_subparsers(dest="command",required=True)
+    subs.add_parser("profiles")
     subs.add_parser("models").add_argument("--gateway",choices=HOSTS,default="main")
     subs.add_parser("generate").add_argument("--job",required=True)
     subs.add_parser("resume").add_argument("--record",required=True)
+    for name in ("models", "generate", "resume"):
+        subs.choices[name].add_argument("--profile")
     try:
         result = run(p.parse_args())
     except Exception as exc:
@@ -215,7 +241,7 @@ def main():
         if isinstance(exc, requests.HTTPError) and exc.response is not None:
             result["http_status"] = exc.response.status_code
     print(json.dumps(result,ensure_ascii=True))
-    return 0 if result.get("status")=="saved" or "models" in result else 1
+    return 0 if result.get("status")=="saved" or "models" in result or "profiles" in result else 1
 
 
 if __name__=="__main__":
